@@ -156,8 +156,8 @@ def train_model(train_loader, val_loader, num_epochs=50, lr=1e-5, save_path="./c
     return model
 
 if __name__=="__main__":
-    img_dir = "/content/drive/MyDrive/ColabDataset/ShanghaiTech/Data/part_B/train_data/images"
-    gt_dir  = "/content/drive/MyDrive/ColabDataset/ShanghaiTech/Data/part_B/train_data/ground-truth"
+    img_dir = "/content/drive/MyDrive/ColabDataset/ShanghaiTech/Data/part_B/train_data/images" #replace with images path in the ShanghaiTech dataset
+    gt_dir  = "/content/drive/MyDrive/ColabDataset/ShanghaiTech/Data/part_B/train_data/ground-truth"  #replace with ground-truth path in the ShanghaiTech dataset
 
     transform = transforms.Compose([
         transforms.RandomHorizontalFlip(),
