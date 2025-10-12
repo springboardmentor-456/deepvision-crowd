@@ -1,0 +1,12 @@
+streamlit>=1.18.0
+torch
+torchvision
+torchaudio
+numpy
+Pillow
+opencv-python
+matplotlib
+scipy
+scikit-learn
+twilio
+pyngrok
