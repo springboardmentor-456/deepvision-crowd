@@ -1,0 +1,162 @@
+
+import os, glob, cv2, time
+import numpy as np, scipy.io as sio, matplotlib.pyplot as plt
+import torch, torch.nn as nn, torch.nn.functional as F
+from torch.utils.data import Dataset, DataLoader
+from torchvision import transforms
+from tqdm import tqdm
+from torch.cuda.amp import autocast, GradScaler
+
+
+DATA_ROOT = r"/content/drive/MyDrive/Shang_data/ShanghaiTech/part_A"
+IMG_SZ = (256,256)
+BATCH = 4
+EPOCHS = 30
+LR = 1e-5
+ALERT_TH = 20.0
+SIGMA = 4
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+class CrowdDataset(Dataset):
+    def __init__(self, root="", sub="train"):
+        self.tf = transforms.ToTensor()
+        self.size = IMG_SZ
+        img_dir = os.path.join(root, f"{'train_data' if sub=='train' else 'test_data'}","images")
+        self.imgs = sorted(glob.glob(os.path.join(img_dir,"*.jpg")) +
+                           glob.glob(os.path.join(img_dir,"*.png")))
+        if len(self.imgs) == 0:
+            raise FileNotFoundError(f"No images found in {img_dir}. Please check path.")
+        self.gt_dir = os.path.join(root, f"{'train_data' if sub=='train' else 'test_data'}","ground-truth")
+
+    def __len__(self):
+        return len(self.imgs)
+
+    def __getitem__(self,i):
+        p=self.imgs[i]
+        img=cv2.cvtColor(cv2.imread(p),cv2.COLOR_BGR2RGB)
+        oh,ow=img.shape[:2]
+        img=cv2.resize(img,self.size)
+        base=os.path.splitext(os.path.basename(p))[0]
+        cand = os.path.join(self.gt_dir, f"GT_{base}.mat")
+        if not os.path.exists(cand):
+            cand = os.path.join(self.gt_dir, base+".mat")
+        pts = np.zeros((0,2))
+        if os.path.exists(cand):
+            m=sio.loadmat(cand)
+            try:
+                pts = np.array(m["image_info"][0,0][0,0][0],dtype=np.float32)
+            except Exception as e:
+                print(f"[WARN] Could not parse GT file {cand}: {e}")
+        if pts.size:
+            pts[:,0] = pts[:,0]* (self.size[1]/ow)
+            pts[:,1] = pts[:,1]* (self.size[0]/oh)
+        den=np.zeros(self.size,dtype=np.float32)
+        for pt in pts:
+            x=int(round(pt[0])); y=int(round(pt[1]))
+            if 0<=x<self.size[1] and 0<=y<self.size[0]:
+                den[y,x]+=1
+        den = cv2.GaussianBlur(den,(SIGMA*4+1,SIGMA*4+1),SIGMA) if den.sum()>0 else den
+        return self.tf(img.astype('float32')/255.0), torch.from_numpy(den[None]).float()
+
+
+class TinyMCNN(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Conv2d(3,16,3,1,1), nn.ReLU(), nn.MaxPool2d(2),
+            nn.Conv2d(16,32,3,1,1), nn.ReLU(), nn.MaxPool2d(2),
+            nn.Conv2d(32,64,3,1,1), nn.ReLU(),
+            nn.Conv2d(64,1,1)
+        )
+    def forward(self,x):
+        o=self.net(x)
+        if o.shape[2:] != x.shape[2:]:
+            o = F.interpolate(o, size=(x.shape[2], x.shape[3]), mode='bilinear', align_corners=False)
+        return o
+
+
+def train_eval(root, epochs=EPOCHS):
+    torch.manual_seed(42)
+    tr = DataLoader(CrowdDataset(root,'train'), batch_size=BATCH, shuffle=True, num_workers=2, pin_memory=True)
+    te = DataLoader(CrowdDataset(root,'test'),  batch_size=BATCH, shuffle=False, num_workers=2, pin_memory=True)
+    model = TinyMCNN().to(DEVICE)
+    opt = torch.optim.Adam(model.parameters(), lr=LR)
+    lossf = nn.MSELoss()
+    scaler = GradScaler()
+    train_losses=[]; val_losses=[]
+    for ep in range(epochs):
+        model.train(); tl=0.0
+        pbar = tqdm(tr, desc=f"Epoch {ep+1}/{epochs}")
+        for x,y in pbar:
+            x,y=x.to(DEVICE, non_blocking=True),y.to(DEVICE, non_blocking=True)
+            opt.zero_grad()
+            with autocast():
+                p=model(x); l=lossf(p,y)
+            scaler.scale(l).backward()
+            scaler.step(opt)
+            scaler.update()
+            tl+=l.item()
+            pbar.set_postfix(loss=l.item())
+        train_losses.append(tl/len(tr) if len(tr)>0 else 0)
+        model.eval(); vl=0.0; preds=[]; gts=[]
+        with torch.no_grad():
+            for x,y in te:
+                x,y=x.to(DEVICE, non_blocking=True),y.to(DEVICE, non_blocking=True)
+                p=model(x); vl+=lossf(p,y).item()
+                preds += p.cpu().numpy().sum(axis=(1,2,3)).tolist()
+                gts += y.cpu().numpy().sum(axis=(1,2,3)).tolist()
+        val_losses.append(vl/len(te) if len(te)>0 else 0)
+        mae = np.mean(np.abs(np.array(preds)-np.array(gts))) if preds else 0
+        rmse = (np.mean((np.array(preds)-np.array(gts))**2))**0.5 if preds else 0
+        print(f"Ep{ep+1} TrLoss={train_losses[-1]:.4f} ValLoss={val_losses[-1]:.4f} MAE={mae:.2f} RMSE={rmse:.2f}")
+    plt.plot(train_losses,label='train'); plt.plot(val_losses,label='val'); plt.legend(); plt.show()
+    # visualize predictions
+    it=iter(te); shown=0
+    with torch.no_grad():
+        while shown<2:
+            try: x,y = next(it)
+            except StopIteration: break
+            p = model(x.to(DEVICE)).cpu()
+            for i in range(len(x)):
+                img=(x[i].permute(1,2,0).numpy()*255).astype('uint8')
+                plt.figure(figsize=(9,3))
+                plt.subplot(1,3,1); plt.imshow(img); plt.title('Image'); plt.axis('off')
+                plt.subplot(1,3,2); plt.imshow(y[i,0],cmap='jet'); plt.title(f'GT {y[i].sum():.1f}')
+                plt.subplot(1,3,3); plt.imshow(p[i,0],cmap='jet'); plt.title(f'Pred {p[i].sum():.1f}')
+                plt.show(); shown+=1
+                if shown>=2: break
+    torch.save(model.state_dict(),"tiny_mcnn.pth")
+    print("Model saved as tiny_mcnn.pth")
+    return model
+
+
+def realtime(model, threshold=ALERT_TH, source=0):
+    cap=cv2.VideoCapture(source)
+    if not cap.isOpened(): print("Cannot open source"); return
+    print("Press q to quit")
+    prev=time.time()
+    while True:
+        ret,frame=cap.read()
+        if not ret: break
+        h,w=IMG_SZ
+        frm=cv2.cvtColor(frame,cv2.COLOR_BGR2RGB); frm=cv2.resize(frm,(w,h))
+        t = transforms.ToTensor()(frm.astype('float32')/255.0).unsqueeze(0).to(DEVICE)
+        with torch.no_grad(): den = model(t).cpu().squeeze().numpy()
+        cnt = den.sum()
+        heat = (den/den.max()*255).astype('uint8') if den.max()>0 else np.zeros_like(den,dtype='uint8')
+        heat = cv2.applyColorMap(heat, cv2.COLORMAP_JET)
+        overlay = cv2.addWeighted(cv2.resize(frame,(w,h)),0.6,heat,0.4,0)
+        cv2.putText(overlay,f"Count:{cnt:.1f}",(10,25),cv2.FONT_HERSHEY_SIMPLEX,0.8,(0,255,0),2)
+        if cnt>threshold: cv2.putText(overlay,"ALERT: OVERCROWD",(10,55),cv2.FONT_HERSHEY_SIMPLEX,0.8,(0,0,255),2)
+        fps=1.0/(time.time()-prev); prev=time.time()
+        cv2.putText(overlay,f"FPS:{fps:.1f}",(10,85),cv2.FONT_HERSHEY_SIMPLEX,0.8,(255,255,0),2)
+        cv2.imshow("Crowd",overlay)
+        if cv2.waitKey(1)&0xFF==ord('q'): break
+    cap.release(); cv2.destroyAllWindows()
+
+
+# MAIN
+
+if __name__=="__main__":
+    model = train_eval(DATA_ROOT, epochs=EPOCHS)
