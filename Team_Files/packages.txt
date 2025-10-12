@@ -1,0 +1,7 @@
+email
+smtplib
+yagmail
+twilio
+pyngrok
+streamlit
+opencv-python-headless
