@@ -3,23 +3,25 @@
 
 The DeepVision Crowd Monitoring project is a computer vision system designed to estimate the number of people in images or videos and visualize crowd density using deep learning. It can also generate a density map to show areas with more people.
 This project was built using PyTorch for model training, OpenCV for image/video processing, and Streamlit for a simple interactive dashboard.
+
+# Files 
 deepvision-crowd
-├── notebooks      ← Colab notebook(s) containing all the code, training, and testing
-├── app            ← Streamlit app (app.py) to interactively estimate crowd count
-└── demo           ← Screenshots or demo outputs showing results
+ notebooks/     ← Colab notebook(s) containing all the code, training, and testing
+ app/           ← Streamlit app (app.py) to interactively estimate crowd count
+ demo/          ← Screenshots or demo outputs showing results
 3 Files Description
-# notebooks
+# Notebooks
 Contains the Colab notebook of code where:
 The dataset is loaded and preprocessed
 Crowd counting model (CNN) is defined and trained
 Sample images are tested and density maps are visualized
-# app
+# App
 app.py is a Streamlit dashboard where you can:
 Upload an image
 Estimate the crowd count
 Visualize the density map overlay
 Receive alerts if crowd exceeds a threshold
-# demo
+# Demo
 Contains screenshots or exported demo outputs showing:
 Sample images
 Density maps
