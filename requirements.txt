@@ -1,0 +1,13 @@
+opencv-python
+h5py
+numpy
+Pillow
+torch
+torchvision
+matplotlib
+scipy
+tqdm
+wandb
+pyyaml
+python-dotenv
+
