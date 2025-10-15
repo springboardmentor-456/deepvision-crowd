@@ -1,0 +1,44 @@
+
+
+# Model
+model:
+  name: "csrnet"
+  pretrained: true
+
+# Dataset
+data:
+
+  root_dir: "./data"
+  image_size: [512, 512]
+  num_workers: 2  
+
+# Training
+training:
+  batch_size: 8  #
+  num_epochs: 50
+  learning_rate: !!float 1e-6  
+  weight_decay: !!float 5e-4
+  train_split: 0.8
+  device: "cuda" 
+  
+  mixed_precision: true  
+  gradient_accumulation: 1  
+  
+  loss:
+    mse_weight: 1.0
+    count_weight: 0.01
+
+  scheduler:
+    type: "step"  
+    step_size: 15
+    gamma: 0.3
+
+# Logging
+logging:
+  results_dir: "results"  
+  save_interval: 10
+  
+  wandb:
+    project: "crowd-density"
+    entity: "sahilagarwal19102004-upes"  
+    log_interval: 5
